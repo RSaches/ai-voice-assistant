@@ -131,9 +131,8 @@ Este projeto está licenciado sob a licença [MIT](LICENSE).
 ## Contato
 Se você tiver dúvidas ou sugestões, entre em contato:
 
-- **Autor**: Seu Nome
-- **Email**: seuemail@exemplo.com
-- **LinkedIn**: [Seu LinkedIn](https://linkedin.com/in/seu-perfil)
+- **Autor**: Sanches Rafael
+- **Email**: isanchess.ia@gmail.com
 
 ---
 
