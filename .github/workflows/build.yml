@@ -1,0 +1,78 @@
+name: 🚀 Build Executables (Win/Mac/Linux)
+
+on:
+  push:
+    branches: [ "main" ]
+  release:
+    types: [ created ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: JARVIS-Windows.exe
+            asset_name: JARVIS-Windows.exe
+          - os: macos-latest
+            artifact_name: JARVIS-MacOS
+            asset_name: JARVIS-MacOS
+          - os: ubuntu-latest
+            artifact_name: JARVIS-Linux
+            asset_name: JARVIS-Linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install System Dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev python3-pyaudio
+
+    - name: Install System Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: brew install portaudio
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build with PyInstaller
+      run: pyinstaller --noconfirm --onefile --windowed --name JARVIS avatar_ia.py
+
+    - name: Rename Output (Windows)
+      if: runner.os == 'Windows'
+      run: move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
+
+    - name: Rename Output (Unix)
+      if: runner.os != 'Windows'
+      run: mv dist/JARVIS dist/${{ matrix.artifact_name }}
+
+    - name: Upload Artifact (For Github Actions Run Page)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.artifact_name }}
+
+    - name: Upload Release Asset (Only on Releases)
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/${{ matrix.artifact_name }}
+        asset_name: ${{ matrix.asset_name }}
+        asset_content_type: application/octet-stream
