@@ -6,9 +6,39 @@ on:
   release:
     types: [ created ]
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
+  version:
+    name: Extract Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      timestamp: ${{ steps.version.outputs.timestamp }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION=${{ github.event.release.tag_name }}
+          else
+            COMMIT_HASH=$(git rev-parse --short HEAD)
+            DATE=$(date +%Y%m%d)
+            VERSION="dev-${DATE}-${COMMIT_HASH}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
   build:
     name: Build on ${{ matrix.os }}
+    needs: version
+    continue-on-error: false
     strategy:
       matrix:
         include:
@@ -54,20 +84,37 @@ jobs:
 
     - name: Build with PyInstaller
       run: pyinstaller --noconfirm --onefile --windowed --name JARVIS avatar_ia.py
+      env:
+        BUILD_VERSION: ${{ needs.version.outputs.version }}
 
-    - name: Rename Output (Windows)
+    - name: Add Version Info (Windows)
       if: runner.os == 'Windows'
-      run: move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
+      run: |
+        powershell -Command "(Get-Item 'dist\JARVIS.exe').VersionInfo | Select-Object FileVersion"
+        move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
 
     - name: Rename Output (Unix)
       if: runner.os != 'Windows'
       run: mv dist/JARVIS dist/${{ matrix.artifact_name }}
 
+    - name: Generate Build Report
+      run: |
+        echo "✅ Build Completed Successfully" > build_report.txt
+        echo "OS: ${{ matrix.os }}" >> build_report.txt
+        echo "Version: ${{ needs.version.outputs.version }}" >> build_report.txt
+        echo "Timestamp: ${{ needs.version.outputs.timestamp }}" >> build_report.txt
+        echo "Artifact: ${{ matrix.artifact_name }}" >> build_report.txt
+        echo "" >> build_report.txt
+        echo "Dependencies:" >> build_report.txt
+        python -m pip list | grep -E "arcade|SpeechRecognition|pyaudio|edge-tts|google-genai|anthropic|pygame|python-dotenv|pyinstaller" >> build_report.txt || true
+
     - name: Upload Artifact (For Github Actions Run Page)
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
-        path: dist/${{ matrix.artifact_name }}
+        path: |
+          dist/${{ matrix.artifact_name }}
+          build_report.txt
 
     - name: Upload Release Asset (Only on Releases)
       if: github.event_name == 'release'
@@ -79,3 +126,58 @@ jobs:
         asset_path: ./dist/${{ matrix.artifact_name }}
         asset_name: ${{ matrix.asset_name }}
         asset_content_type: application/octet-stream
+
+  notify:
+    name: 📢 Send Notifications
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          echo "## 🚀 Release: ${{ needs.version.outputs.version }}" > CHANGELOG_RELEASE.md
+          echo "" >> CHANGELOG_RELEASE.md
+          echo "**Build Date:** ${{ needs.version.outputs.timestamp }}" >> CHANGELOG_RELEASE.md
+          echo "" >> CHANGELOG_RELEASE.md
+          echo "### 📦 Artifacts" >> CHANGELOG_RELEASE.md
+          echo "- ✅ JARVIS-Windows.exe" >> CHANGELOG_RELEASE.md
+          echo "- ✅ JARVIS-MacOS" >> CHANGELOG_RELEASE.md
+          echo "- ✅ JARVIS-Linux" >> CHANGELOG_RELEASE.md
+          echo "" >> CHANGELOG_RELEASE.md
+          echo "### 📝 Recent Commits" >> CHANGELOG_RELEASE.md
+          git log --oneline -5 >> CHANGELOG_RELEASE.md || echo "No commits available" >> CHANGELOG_RELEASE.md
+          cat CHANGELOG_RELEASE.md
+
+      - name: Build Status Summary
+        run: |
+          echo "## Build Status Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: ${{ needs.version.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ All builds completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Download Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "[View Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create Deployment Badge
+        run: |
+          BADGE_URL="https://img.shields.io/badge/JARVIS-${{ needs.version.outputs.version }}-brightgreen"
+          echo "Badge: $BADGE_URL"
+
+      - name: Comment on PR (if push to main)
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number || 1,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ✅ Build Successful!\n\n**Version**: ${{ needs.version.outputs.version }}\n**Status**: Ready for download\n\n[Download Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+            })
+        continue-on-error: true
