@@ -1,0 +1,12 @@
+# Instalação:
+# 1. Tenha o Python 3.10+
+# 2. Rode: pip install -r requirements.txt
+
+arcade>=2.6.17
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.13
+edge-tts>=6.1.9
+google-genai>=0.2.0
+anthropic>=0.18.1
+pygame>=2.5.2
+python-dotenv>=1.0.1
