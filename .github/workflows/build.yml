@@ -7,35 +7,8 @@ on:
     types: [ created ]
 
 jobs:
-  version:
-    name: Extract Version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      timestamp: ${{ steps.version.outputs.timestamp }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Extract Version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            VERSION=${{ github.event.release.tag_name }}
-          else
-            COMMIT_HASH=$(git rev-parse --short HEAD)
-            DATE=$(date +%Y%m%d)
-            VERSION="dev-${DATE}-${COMMIT_HASH}"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-
   build:
     name: Build on ${{ matrix.os }}
-    needs: version
-    continue-on-error: false
     strategy:
       matrix:
         include:
@@ -60,21 +33,18 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install System Dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew update
-        brew install portaudio
-        export LDFLAGS="-L/usr/local/opt/portaudio/lib"
-        export CPPFLAGS="-I/usr/local/opt/portaudio/include"
-        python3 -m pip install pyaudio
-
     - name: Install System Dependencies (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y portaudio19-dev python3-pyaudio
-        python3 -m pip install pyaudio
+
+    - name: Install System Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install portaudio
+        export LDFLAGS="-L/usr/local/opt/portaudio/lib"
+        export CPPFLAGS="-I/usr/local/opt/portaudio/include"
 
     - name: Install Python Dependencies
       run: |
@@ -84,37 +54,20 @@ jobs:
 
     - name: Build with PyInstaller
       run: pyinstaller --noconfirm --onefile --windowed --name JARVIS avatar_ia.py
-      env:
-        BUILD_VERSION: ${{ needs.version.outputs.version }}
 
-    - name: Add Version Info (Windows)
+    - name: Rename Output (Windows)
       if: runner.os == 'Windows'
       run: move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
-      shell: cmd
 
     - name: Rename Output (Unix)
       if: runner.os != 'Windows'
       run: mv dist/JARVIS dist/${{ matrix.artifact_name }}
 
-    - name: Generate Build Report
-      run: |
-        echo "=== Build Completed Successfully ===" > build_report.txt
-        echo "OS: ${{ matrix.os }}" >> build_report.txt
-        echo "Version: ${{ needs.version.outputs.version }}" >> build_report.txt
-        echo "Timestamp: ${{ needs.version.outputs.timestamp }}" >> build_report.txt
-        echo "Artifact: ${{ matrix.artifact_name }}" >> build_report.txt
-        echo "" >> build_report.txt
-        echo "Installed Packages:" >> build_report.txt
-        python -m pip list >> build_report.txt 2>&1 || echo "Could not list packages" >> build_report.txt
-      shell: bash
-
     - name: Upload Artifact (For Github Actions Run Page)
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
-        path: |
-          dist/${{ matrix.artifact_name }}
-          build_report.txt
+        path: dist/${{ matrix.artifact_name }}
 
     - name: Upload Release Asset (Only on Releases)
       if: github.event_name == 'release'
@@ -123,62 +76,3 @@ jobs:
         files: dist/${{ matrix.artifact_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  notify:
-    name: 📢 Send Notifications
-    needs: [version, build]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Generate Changelog
-        id: changelog
-        run: |
-          {
-            echo "## 🚀 Release: ${{ needs.version.outputs.version }}"
-            echo ""
-            echo "**Build Date:** ${{ needs.version.outputs.timestamp }}"
-            echo ""
-            echo "### 📦 Artifacts"
-            echo "- ✅ JARVIS-Windows.exe"
-            echo "- ✅ JARVIS-MacOS"
-            echo "- ✅ JARVIS-Linux"
-            echo ""
-            echo "### 📝 Recent Commits"
-            git log --oneline -5 || echo "No commits available"
-          } > CHANGELOG_RELEASE.md
-          cat CHANGELOG_RELEASE.md
-        shell: bash
-
-      - name: Build Status Summary
-        run: |
-          echo "## Build Status Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${{ needs.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp**: ${{ needs.version.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ✅ All builds completed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Download Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "[View Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
-
-      - name: Create Deployment Badge
-        run: |
-          BADGE_URL="https://img.shields.io/badge/JARVIS-${{ needs.version.outputs.version }}-brightgreen"
-          echo "Badge: $BADGE_URL"
-
-      - name: Comment on PR (if push to main)
-        if: github.event_name == 'push'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: '✅ Build Successful!\n\n**Version**: ${{ needs.version.outputs.version }}\n**Status**: Ready for download'
-            })
-        continue-on-error: true
