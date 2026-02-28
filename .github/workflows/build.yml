@@ -6,9 +6,6 @@ on:
   release:
     types: [ created ]
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
   version:
     name: Extract Version
@@ -89,9 +86,8 @@ jobs:
 
     - name: Add Version Info (Windows)
       if: runner.os == 'Windows'
-      run: |
-        powershell -Command "(Get-Item 'dist\JARVIS.exe').VersionInfo | Select-Object FileVersion"
-        move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
+      run: move dist\JARVIS.exe dist\${{ matrix.artifact_name }}
+      shell: cmd
 
     - name: Rename Output (Unix)
       if: runner.os != 'Windows'
@@ -99,14 +95,15 @@ jobs:
 
     - name: Generate Build Report
       run: |
-        echo "✅ Build Completed Successfully" > build_report.txt
+        echo "=== Build Completed Successfully ===" > build_report.txt
         echo "OS: ${{ matrix.os }}" >> build_report.txt
         echo "Version: ${{ needs.version.outputs.version }}" >> build_report.txt
         echo "Timestamp: ${{ needs.version.outputs.timestamp }}" >> build_report.txt
         echo "Artifact: ${{ matrix.artifact_name }}" >> build_report.txt
         echo "" >> build_report.txt
-        echo "Dependencies:" >> build_report.txt
-        python -m pip list | grep -E "arcade|SpeechRecognition|pyaudio|edge-tts|google-genai|anthropic|pygame|python-dotenv|pyinstaller" >> build_report.txt || true
+        echo "Installed Packages:" >> build_report.txt
+        python -m pip list >> build_report.txt 2>&1 || echo "Could not list packages" >> build_report.txt
+      shell: bash
 
     - name: Upload Artifact (For Github Actions Run Page)
       uses: actions/upload-artifact@v4
@@ -118,14 +115,11 @@ jobs:
 
     - name: Upload Release Asset (Only on Releases)
       if: github.event_name == 'release'
-      uses: actions/upload-release-asset@v1
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/${{ matrix.artifact_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./dist/${{ matrix.artifact_name }}
-        asset_name: ${{ matrix.asset_name }}
-        asset_content_type: application/octet-stream
 
   notify:
     name: 📢 Send Notifications
@@ -139,18 +133,21 @@ jobs:
       - name: Generate Changelog
         id: changelog
         run: |
-          echo "## 🚀 Release: ${{ needs.version.outputs.version }}" > CHANGELOG_RELEASE.md
-          echo "" >> CHANGELOG_RELEASE.md
-          echo "**Build Date:** ${{ needs.version.outputs.timestamp }}" >> CHANGELOG_RELEASE.md
-          echo "" >> CHANGELOG_RELEASE.md
-          echo "### 📦 Artifacts" >> CHANGELOG_RELEASE.md
-          echo "- ✅ JARVIS-Windows.exe" >> CHANGELOG_RELEASE.md
-          echo "- ✅ JARVIS-MacOS" >> CHANGELOG_RELEASE.md
-          echo "- ✅ JARVIS-Linux" >> CHANGELOG_RELEASE.md
-          echo "" >> CHANGELOG_RELEASE.md
-          echo "### 📝 Recent Commits" >> CHANGELOG_RELEASE.md
-          git log --oneline -5 >> CHANGELOG_RELEASE.md || echo "No commits available" >> CHANGELOG_RELEASE.md
+          {
+            echo "## 🚀 Release: ${{ needs.version.outputs.version }}"
+            echo ""
+            echo "**Build Date:** ${{ needs.version.outputs.timestamp }}"
+            echo ""
+            echo "### 📦 Artifacts"
+            echo "- ✅ JARVIS-Windows.exe"
+            echo "- ✅ JARVIS-MacOS"
+            echo "- ✅ JARVIS-Linux"
+            echo ""
+            echo "### 📝 Recent Commits"
+            git log --oneline -5 || echo "No commits available"
+          } > CHANGELOG_RELEASE.md
           cat CHANGELOG_RELEASE.md
+        shell: bash
 
       - name: Build Status Summary
         run: |
@@ -173,11 +170,12 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number || 1,
+            github.rest.repos.createCommitComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## ✅ Build Successful!\n\n**Version**: ${{ needs.version.outputs.version }}\n**Status**: Ready for download\n\n[Download Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+              commit_sha: context.sha,
+              body: '✅ Build Successful!\n\n**Version**: ${{ needs.version.outputs.version }}\n**Status**: Ready for download'
             })
         continue-on-error: true
